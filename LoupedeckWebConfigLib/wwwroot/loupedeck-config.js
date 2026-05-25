@@ -58,6 +58,33 @@
   const getConfiguredDefault = (field) =>
     field.hasAttribute("lwcl-default") ? field.getAttribute("lwcl-default") : "";
 
+  const getOptionLabel = (field, value) =>
+    field.querySelector(`.rich-option[data-value="${CSS.escape(value)}"] .rich-option-title`)?.textContent || value;
+
+  const updateRichSelectSummary = (field) => {
+    const summary = field.querySelector(".rich-select-summary");
+    if (!summary) {
+      return;
+    }
+
+    const selected = Array.from(field.querySelectorAll(".rich-option.selected"))
+      .map((option) => option.getAttribute("data-value") || "");
+    summary.textContent = selected.length === 0
+      ? "Select..."
+      : selected.map((value) => getOptionLabel(field, value)).join(", ");
+  };
+
+  const closeRichSelect = (field) => {
+    field.classList.remove("open");
+    field.querySelector(".rich-select-summary")?.setAttribute("aria-expanded", "false");
+  };
+
+  const toggleRichSelect = (field) => {
+    const open = !field.classList.contains("open");
+    field.classList.toggle("open", open);
+    field.querySelector(".rich-select-summary")?.setAttribute("aria-expanded", open ? "true" : "false");
+  };
+
   const getDefaultValue = (field) => {
     if (isMultiple(field)) {
       const defaultValue = getConfiguredDefault(field);
@@ -111,6 +138,7 @@
         option.classList.toggle("selected", active);
         option.setAttribute("aria-selected", active ? "true" : "false");
       }
+      updateRichSelectSummary(field);
       return;
     }
 
@@ -166,12 +194,10 @@
     }
 
     field.dataset.rendered = "true";
-    field.setAttribute("role", "listbox");
-    field.setAttribute("tabindex", "0");
-    field.setAttribute("aria-multiselectable", isMultiple(field) ? "true" : "false");
     field.classList.add("rich-select");
+    field.style.setProperty("--rich-select-visible-options", String(Math.max(1, Number.parseInt(field.getAttribute("size") || "5", 10) || 5)));
 
-    field.innerHTML = parameter.options.map((option) => {
+    const optionsHtml = parameter.options.map((option) => {
       const value = String(option.value ?? option.label ?? "");
       const label = String(option.label ?? option.value ?? "");
       const description = String(option.description ?? "");
@@ -181,6 +207,14 @@
           ${description ? `<span class="rich-option-description">${escapeHtml(description)}</span>` : ""}
         </button>`;
     }).join("");
+
+    field.innerHTML = `
+      <button type="button" class="rich-select-summary" aria-haspopup="listbox" aria-expanded="false">Select...</button>
+      <div class="rich-select-menu" role="listbox" aria-multiselectable="${isMultiple(field) ? "true" : "false"}">
+        ${optionsHtml}
+      </div>`;
+
+    field.querySelector(".rich-select-summary").addEventListener("click", () => toggleRichSelect(field));
 
     field.addEventListener("click", (event) => {
       const option = event.target.closest(".rich-option");
@@ -198,7 +232,17 @@
       const active = isMultiple(field) ? !option.classList.contains("selected") : true;
       option.classList.toggle("selected", active);
       option.setAttribute("aria-selected", active ? "true" : "false");
+      updateRichSelectSummary(field);
+      if (!isMultiple(field)) {
+        closeRichSelect(field);
+      }
       field.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!field.contains(event.target)) {
+        closeRichSelect(field);
+      }
     });
   };
 
@@ -245,7 +289,11 @@
     let valid = true;
 
     if (pattern && !isMultiple(field)) {
-      valid = new RegExp(`^(?:${pattern})$`).test(String(coerceFieldValue(field)));
+      try {
+        valid = new RegExp(`^(?:${pattern})$`).test(String(coerceFieldValue(field)));
+      } catch {
+        valid = false;
+      }
     }
 
     if (valid && typeof field.checkValidity === "function") {
@@ -263,30 +311,29 @@
     return valid;
   };
 
-  const prepareValidationAttributes = (field) => {
-    const pattern = field.getAttribute("lwcl-check-regex");
-    if (pattern && !field.hasAttribute("pattern")) {
-      field.setAttribute("pattern", pattern);
-    }
-  };
-
   const attachFieldHandlers = (field) => {
-    prepareValidationAttributes(field);
     field.addEventListener("input", () => validateField(field));
     field.addEventListener("change", () => validateField(field));
     validateField(field);
   };
 
   const updateButtonState = () => {
+    const saveButton = document.getElementById("save-config");
+    const saveCloseButton = document.getElementById("save-close-config");
+    const saveStatus = document.getElementById("save-status");
+    if (!saveButton || !saveCloseButton || !saveStatus) {
+      return;
+    }
+
     const hasInvalidFields = state.invalidFields.size > 0;
     const disabled = hasInvalidFields || !state.dirty;
-    document.getElementById("save-config").disabled = disabled;
-    document.getElementById("save-close-config").disabled = disabled;
+    saveButton.disabled = disabled;
+    saveCloseButton.disabled = disabled;
 
     if (hasInvalidFields) {
-      document.getElementById("save-status").textContent = "Fix invalid fields";
-    } else if (!state.dirty && document.getElementById("save-status").textContent === "Fix invalid fields") {
-      document.getElementById("save-status").textContent = "";
+      saveStatus.textContent = "Fix invalid fields";
+    } else if (!state.dirty && saveStatus.textContent === "Fix invalid fields") {
+      saveStatus.textContent = "";
     }
   };
 
@@ -345,16 +392,21 @@
   };
 
   window.registerLoupedeckPluginAutoConfig = () => {
-    state.pluginProviderRegistered = true;
     window.applyLoupedeckPluginConfig(window.getLoupedeckPluginConfig());
 
     for (const field of getPluginFields()) {
+      if (field.dataset.lwclBound === "true") {
+        continue;
+      }
+
       const parameter = getPluginParameterDefinition(getConfigKey(field));
       renderSelectOptions(field, parameter);
       renderRichSelectOptions(field, parameter);
       attachFieldHandlers(field);
+      field.dataset.lwclBound = "true";
     }
 
+    state.pluginProviderRegistered = true;
     updateDirtyState();
   };
 
@@ -363,10 +415,15 @@
     state.providers[actionGuid] = () => window.collectLoupedeckActionConfig(actionGuid);
 
     for (const field of getActionFields(actionGuid)) {
+      if (field.dataset.lwclBound === "true") {
+        continue;
+      }
+
       const parameter = getParameterDefinition(actionGuid, getConfigKey(field));
       renderSelectOptions(field, parameter);
       renderRichSelectOptions(field, parameter);
       attachFieldHandlers(field);
+      field.dataset.lwclBound = "true";
     }
 
     updateDirtyState();

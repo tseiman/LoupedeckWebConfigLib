@@ -1,5 +1,5 @@
 // Runs a console smoke test that registers sample actions and exercises the local web service.
-using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json.Nodes;
 using LoupedeckWebConfigLib;
 
@@ -30,13 +30,6 @@ LoupedeckWebConfig.RegisterPlugin(new LoupedeckPluginRegistration(
     Console.WriteLine("Plugin saved configuration:");
     Console.WriteLine(configuration?.ToJsonString() ?? "null");
 });
-LoupedeckWebConfig.UpdatePluginConfiguration(JsonNode.Parse("""
-{
-  "deviceIp": "192.168.10.42",
-  "devicePath": "/dev/loupedeck-test",
-  "mediaDirectory": "/tmp/loupedeck-media"
-}
-"""));
 
 var sampleAction = new SampleAction();
 var secondAction = new SecondSampleAction();
@@ -75,37 +68,8 @@ else
     LoupedeckWebConfig.UpdateActionRegistration(secondAction);
 }
 
-var savePayload = new Dictionary<string, object?>
-{
-    ["plugin"] = new
-    {
-        deviceIp = "192.168.10.42",
-        devicePath = "/dev/loupedeck-test",
-        mediaDirectory = "/tmp/loupedeck-media"
-    },
-    ["actions"] = new Dictionary<string, object?>
-    {
-        [sampleAction.Registration.ActionGuid.ToString()] = new
-        {
-            buttonText = "Configured from console",
-            repeatCount = 3,
-            enabled = true
-        },
-        [secondAction.Registration.ActionGuid.ToString()] = new
-        {
-            mode = "advanced"
-        },
-        [selectSampleAction.Registration.ActionGuid.ToString()] = new
-        {
-            simpleSingle = "camera-b",
-            simpleMulti = new[] { "camera-a", "camera-c" },
-            richSingle = "program",
-            richMulti = new[] { "macro-start", "macro-stop" }
-        }
-    }
-};
-
-var saveResponse = await httpClient.PostAsJsonAsync(new Uri(uri, "config"), savePayload);
+var savePayloadJson = LoadSampleSavePayload(sampleAction, secondAction, selectSampleAction);
+var saveResponse = await httpClient.PostAsync(new Uri(uri, "config"), new StringContent(savePayloadJson, Encoding.UTF8, "application/json"));
 saveResponse.EnsureSuccessStatusCode();
 
 Console.WriteLine("GetConfig() after batch save:");
@@ -154,6 +118,14 @@ static async Task<string> ReadNextSseEventAsync(StreamReader reader)
     }
 
     return "closed";
+}
+
+static string LoadSampleSavePayload(SampleAction sampleAction, SecondSampleAction secondAction, SelectSampleAction selectSampleAction)
+{
+    return EmbeddedTextResource.Load<Program>("Resources.SampleSavePayload.json")
+        .Replace("{{sampleActionGuid}}", sampleAction.Registration.ActionGuid.ToString(), StringComparison.Ordinal)
+        .Replace("{{secondActionGuid}}", secondAction.Registration.ActionGuid.ToString(), StringComparison.Ordinal)
+        .Replace("{{selectSampleActionGuid}}", selectSampleAction.Registration.ActionGuid.ToString(), StringComparison.Ordinal);
 }
 
 internal sealed class SampleAction : ILoupedeckConfigAction
