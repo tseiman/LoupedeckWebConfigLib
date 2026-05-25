@@ -1,0 +1,15 @@
+<label>
+  Macro
+  <select data-config-key="macroIndex" data-config-type="integer" data-default=""></select>
+</label>
+<label>
+  Button label
+  <input data-config-key="buttonLabel" data-default="Run Macro" checkRegEx="[A-Za-z0-9 _-]{1,32}">
+</label>
+<label>
+  Repeat count
+  <input type="number" min="1" data-config-key="repeatCount" data-config-type="integer" data-default="1" checkRegEx="[0-9]+">
+</label>
+<script>
+  window.registerLoupedeckAutoConfig("{{actionGuid}}");
+</script>

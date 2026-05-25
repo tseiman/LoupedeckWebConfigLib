@@ -1,0 +1,15 @@
+<label>
+  Button text
+  <input id="sample-button-text" type="text" data-config-key="buttonText" data-default="Start" checkRegEx="[A-Za-z0-9 _-]{1,32}">
+</label>
+<label>
+  Repeat count
+  <input id="sample-repeat-count" type="number" min="1" data-config-key="repeatCount" data-config-type="integer" data-default="1" checkRegEx="[0-9]+">
+</label>
+<label class="checkbox-label">
+  <input id="sample-enabled" type="checkbox" data-config-key="enabled" data-default="true">
+  Enabled
+</label>
+<script>
+  window.registerLoupedeckAutoConfig("{{actionGuid}}");
+</script>
