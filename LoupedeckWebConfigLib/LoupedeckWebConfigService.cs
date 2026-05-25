@@ -26,8 +26,12 @@ public sealed class LoupedeckWebConfigService : IDisposable
     private readonly Dictionary<Guid, JsonNode?> _actionConfigurations = new();
     private readonly Dictionary<string, JsonNode?> _persistedActionConfigurations = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<SseClient> _sseClients = [];
+    private Action<JsonNode?>? _pluginConfigurationUpdated;
+    private JsonNode? _pluginConfiguration;
+    private JsonNode? _persistedPluginConfiguration;
     private HttpListener? _listener;
     private CancellationTokenSource? _cancellation;
+    private CancellationTokenSource? _autoDeactivateCancellation;
     private Task? _serverTask;
 
     public LoupedeckWebConfigService(LoupedeckWebConfigOptions? options = null)
@@ -42,15 +46,20 @@ public sealed class LoupedeckWebConfigService : IDisposable
 
     public bool IsActive => _listener is not null;
 
-    public void RegisterPlugin(LoupedeckPluginRegistration plugin)
+    public void RegisterPlugin(LoupedeckPluginRegistration plugin, Action<JsonNode?>? configurationUpdated = null)
     {
         ArgumentNullException.ThrowIfNull(plugin);
 
+        JsonNode? pluginConfiguration;
         lock (_sync)
         {
             Plugin = plugin;
+            _pluginConfigurationUpdated = configurationUpdated;
+            _pluginConfiguration = _persistedPluginConfiguration?.DeepClone() ?? _pluginConfiguration;
+            pluginConfiguration = _pluginConfiguration?.DeepClone();
         }
 
+        configurationUpdated?.Invoke(pluginConfiguration?.DeepClone());
         Log($"Registered plugin '{plugin.PluginId}' with title '{plugin.Title}'.");
     }
 
@@ -107,33 +116,46 @@ public sealed class LoupedeckWebConfigService : IDisposable
         });
     }
 
+    public void UpdatePluginConfiguration(JsonNode? configuration)
+    {
+        StorePluginConfiguration(configuration?.DeepClone());
+        _ = BroadcastServerEventAsync("configuration-updated", new
+        {
+            plugin = Plugin?.PluginId
+        });
+    }
+
     public Uri ActivateConfig()
     {
+        Uri uri;
+
         lock (_sync)
         {
             if (ServiceUri is not null)
             {
-                return ServiceUri;
+                uri = ServiceUri;
             }
+            else
+            {
+                var port = FindFreeLocalPort();
+                uri = new Uri($"http://{_options.Host}:{port}/");
+                _listener = new HttpListener();
+                _listener.Prefixes.Add(uri.ToString());
+                _listener.Start();
 
-            var port = FindFreeLocalPort();
-            var uri = new Uri($"http://{_options.Host}:{port}/");
-            _listener = new HttpListener();
-            _listener.Prefixes.Add(uri.ToString());
-            _listener.Start();
-
-            _cancellation = new CancellationTokenSource();
-            _serverTask = Task.Run(() => RunServerAsync(_listener, _cancellation.Token));
-            ServiceUri = uri;
-            Log($"Started local config web server at {uri}.");
+                _cancellation = new CancellationTokenSource();
+                _serverTask = Task.Run(() => RunServerAsync(_listener, _cancellation.Token));
+                ServiceUri = uri;
+                Log($"Started local config web server at {uri}.");
+            }
         }
 
-        if (_options.OpenBrowser && ServiceUri is not null)
+        if (_options.OpenBrowser)
         {
-            OpenDefaultBrowser(ServiceUri);
+            OpenDefaultBrowser(uri);
         }
 
-        return ServiceUri!;
+        return uri;
     }
 
     public void DeactivateConfig()
@@ -147,6 +169,9 @@ public sealed class LoupedeckWebConfigService : IDisposable
             listener = _listener;
             cancellation = _cancellation;
             serverTask = _serverTask;
+            _autoDeactivateCancellation?.Cancel();
+            _autoDeactivateCancellation?.Dispose();
+            _autoDeactivateCancellation = null;
             _listener = null;
             _cancellation = null;
             _serverTask = null;
@@ -180,6 +205,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
         {
             return new LoupedeckConfigSnapshot(
                 Plugin,
+                _pluginConfiguration?.DeepClone(),
                 _actions.Values.Select(static action => action.Registration).OrderBy(static action => action.Name, StringComparer.OrdinalIgnoreCase).ToArray(),
                 new Dictionary<Guid, JsonNode?>(_actionConfigurations));
         }
@@ -197,6 +223,14 @@ public sealed class LoupedeckWebConfigService : IDisposable
             return _actionConfigurations.TryGetValue(actionGuid, out var configuration)
                 ? configuration?.DeepClone()
                 : null;
+        }
+    }
+
+    public JsonNode? GetPluginConfiguration()
+    {
+        lock (_sync)
+        {
+            return _pluginConfiguration?.DeepClone();
         }
     }
 
@@ -265,6 +299,12 @@ public sealed class LoupedeckWebConfigService : IDisposable
                 return;
             }
 
+            if (context.Request.HttpMethod == "GET" && path == "/plugin/config")
+            {
+                await WritePluginConfigurationAsync(context).ConfigureAwait(false);
+                return;
+            }
+
             if (context.Request.HttpMethod == "GET" && path == "/events")
             {
                 await HandleServerEventsAsync(context).ConfigureAwait(false);
@@ -274,6 +314,12 @@ public sealed class LoupedeckWebConfigService : IDisposable
             if (context.Request.HttpMethod == "POST" && path == "/config")
             {
                 await StoreAllActionConfigurationsAsync(context).ConfigureAwait(false);
+                return;
+            }
+
+            if (context.Request.HttpMethod == "POST" && path == "/plugin/config")
+            {
+                await StorePluginConfigurationAsync(context).ConfigureAwait(false);
                 return;
             }
 
@@ -297,6 +343,10 @@ public sealed class LoupedeckWebConfigService : IDisposable
             }
 
             await WriteResponseAsync(context.Response, 404, "text/plain; charset=utf-8", "Not found").ConfigureAwait(false);
+        }
+        catch (Exception ex) when (IsClientDisconnect(ex))
+        {
+            Log($"Client disconnected while handling request: {ex.Message}");
         }
         catch (Exception ex)
         {
@@ -342,6 +392,26 @@ public sealed class LoupedeckWebConfigService : IDisposable
         await WriteResponseAsync(context.Response, 200, "application/json; charset=utf-8", """{"saved":true}""").ConfigureAwait(false);
     }
 
+    private async Task StorePluginConfigurationAsync(HttpListenerContext context)
+    {
+        using var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding);
+        var body = await reader.ReadToEndAsync().ConfigureAwait(false);
+        JsonNode? config;
+
+        try
+        {
+            config = string.IsNullOrWhiteSpace(body) ? null : JsonNode.Parse(body);
+        }
+        catch (JsonException)
+        {
+            await WriteResponseAsync(context.Response, 400, "text/plain; charset=utf-8", "Body must be valid JSON").ConfigureAwait(false);
+            return;
+        }
+
+        StorePluginConfiguration(config);
+        await WriteResponseAsync(context.Response, 200, "application/json; charset=utf-8", """{"saved":true}""").ConfigureAwait(false);
+    }
+
     private async Task StoreAllActionConfigurationsAsync(HttpListenerContext context)
     {
         using var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding);
@@ -369,8 +439,28 @@ public sealed class LoupedeckWebConfigService : IDisposable
             return;
         }
 
-        foreach (var entry in configs)
+        if (configs.TryGetPropertyValue("plugin", out var pluginConfig))
         {
+            StorePluginConfiguration(pluginConfig?.DeepClone());
+        }
+
+        var actionConfigs = configs.TryGetPropertyValue("actions", out var actionsNode)
+            ? actionsNode as JsonObject
+            : configs;
+
+        if (actionConfigs is null)
+        {
+            await WriteResponseAsync(context.Response, 400, "text/plain; charset=utf-8", "'actions' must be a JSON object").ConfigureAwait(false);
+            return;
+        }
+
+        foreach (var entry in actionConfigs)
+        {
+            if (entry.Key is "plugin" or "actions")
+            {
+                continue;
+            }
+
             if (!Guid.TryParse(entry.Key, out var actionGuid))
             {
                 await WriteResponseAsync(context.Response, 400, "text/plain; charset=utf-8", $"Invalid action GUID '{entry.Key}'").ConfigureAwait(false);
@@ -385,6 +475,11 @@ public sealed class LoupedeckWebConfigService : IDisposable
         }
 
         await WriteResponseAsync(context.Response, 200, "application/json; charset=utf-8", GetConfig()).ConfigureAwait(false);
+    }
+
+    private async Task WritePluginConfigurationAsync(HttpListenerContext context)
+    {
+        await WriteResponseAsync(context.Response, 200, "application/json; charset=utf-8", GetPluginConfiguration()?.ToJsonString(JsonOptions) ?? "null").ConfigureAwait(false);
     }
 
     private async Task WriteActionConfigurationAsync(HttpListenerContext context)
@@ -438,6 +533,21 @@ public sealed class LoupedeckWebConfigService : IDisposable
         return true;
     }
 
+    private void StorePluginConfiguration(JsonNode? config)
+    {
+        Action<JsonNode?>? callback;
+        lock (_sync)
+        {
+            _pluginConfiguration = config?.DeepClone();
+            _persistedPluginConfiguration = _pluginConfiguration?.DeepClone();
+            callback = _pluginConfigurationUpdated;
+        }
+
+        callback?.Invoke(config?.DeepClone());
+        PersistConfigurations();
+        Log("Stored plugin configuration.");
+    }
+
     private async Task HandleServerEventsAsync(HttpListenerContext context)
     {
         var response = context.Response;
@@ -454,6 +564,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
 
         lock (_sync)
         {
+            CancelAutoDeactivate();
             _sseClients.Add(client);
         }
 
@@ -463,16 +574,18 @@ public sealed class LoupedeckWebConfigService : IDisposable
         {
             await WriteServerEventAsync(client, "connected", new { connected = true }).ConfigureAwait(false);
             var cancellationToken = _cancellation?.Token ?? CancellationToken.None;
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(_options.SseHeartbeatInterval, cancellationToken).ConfigureAwait(false);
+                await WriteServerEventAsync(client, "heartbeat", new { utc = DateTimeOffset.UtcNow }).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {
         }
-        catch (IOException)
+        catch (Exception ex) when (IsClientDisconnect(ex))
         {
-        }
-        catch (ObjectDisposedException)
-        {
+            Log($"SSE client disconnected ({client.Id}): {ex.Message}");
         }
         finally
         {
@@ -484,8 +597,58 @@ public sealed class LoupedeckWebConfigService : IDisposable
             client.WriteLock.Dispose();
             writer.Dispose();
             response.Close();
-            Log($"SSE client disconnected ({client.Id}).");
+            Log($"SSE client closed ({client.Id}).");
+            ScheduleAutoDeactivateIfNoBrowserClients();
         }
+    }
+
+    private void ScheduleAutoDeactivateIfNoBrowserClients()
+    {
+        if (!_options.AutoDeactivateWhenBrowserClosed)
+        {
+            return;
+        }
+
+        CancellationTokenSource autoDeactivateCancellation;
+        lock (_sync)
+        {
+            if (_listener is null || _sseClients.Count > 0)
+            {
+                return;
+            }
+
+            CancelAutoDeactivate();
+            _autoDeactivateCancellation = new CancellationTokenSource();
+            autoDeactivateCancellation = _autoDeactivateCancellation;
+        }
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(_options.BrowserDisconnectGracePeriod, autoDeactivateCancellation.Token).ConfigureAwait(false);
+                lock (_sync)
+                {
+                    if (_listener is null || _sseClients.Count > 0)
+                    {
+                        return;
+                    }
+                }
+
+                Log("No browser clients remain; stopping local config web server.");
+                DeactivateConfig();
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        });
+    }
+
+    private void CancelAutoDeactivate()
+    {
+        _autoDeactivateCancellation?.Cancel();
+        _autoDeactivateCancellation?.Dispose();
+        _autoDeactivateCancellation = null;
     }
 
     private async Task BroadcastServerEventAsync(string eventName, object data)
@@ -528,20 +691,67 @@ public sealed class LoupedeckWebConfigService : IDisposable
         }
     }
 
+    private static bool IsClientDisconnect(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is IOException or ObjectDisposedException)
+            {
+                return true;
+            }
+
+            if (current is HttpListenerException httpListenerException)
+            {
+                return httpListenerException.ErrorCode is 32 or 64 or 995
+                    || httpListenerException.Message.Contains("Broken pipe", StringComparison.OrdinalIgnoreCase)
+                    || httpListenerException.Message.Contains("transport connection", StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (current is SocketException socketException)
+            {
+                return socketException.NativeErrorCode == 32
+                    || socketException.SocketErrorCode is SocketError.ConnectionAborted
+                    or SocketError.ConnectionReset
+                    or SocketError.Shutdown;
+            }
+        }
+
+        return false;
+    }
+
     private string BuildIndexHtml()
     {
         var html = LoadAsset("index.html");
         var snapshot = GetConfigSnapshot();
         var title = snapshot.Plugin?.Title ?? "Loupedeck Configuration";
         var heading = snapshot.Plugin?.Heading ?? title;
+        var pluginSettingsHtml = BuildPluginHtml(snapshot.Plugin);
         var actionsHtml = string.Join(Environment.NewLine, snapshot.Actions.Select(BuildActionHtml));
         var bootstrapJson = JsonSerializer.Serialize(snapshot, JsonOptions);
 
         return html
             .Replace("{{title}}", WebUtility.HtmlEncode(title), StringComparison.Ordinal)
             .Replace("{{heading}}", WebUtility.HtmlEncode(heading), StringComparison.Ordinal)
+            .Replace("{{pluginSettings}}", pluginSettingsHtml, StringComparison.Ordinal)
             .Replace("{{actions}}", actionsHtml, StringComparison.Ordinal)
             .Replace("{{configJson}}", bootstrapJson, StringComparison.Ordinal);
+    }
+
+    private static string BuildPluginHtml(LoupedeckPluginRegistration? plugin)
+    {
+        if (plugin is null || string.IsNullOrWhiteSpace(plugin.HtmlSnippet))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"""<section class="plugin-settings" data-plugin-config="{WebUtility.HtmlEncode(GetPluginConfigurationKey(plugin))}">""");
+        builder.AppendLine("""  <h2>Plugin Settings</h2>""");
+        builder.AppendLine("""  <div class="snippet">""");
+        builder.AppendLine(RenderPluginSnippet(plugin));
+        builder.AppendLine("""  </div>""");
+        builder.AppendLine("</section>");
+        return builder.ToString();
     }
 
     private static string BuildActionHtml(LoupedeckActionRegistration action)
@@ -568,10 +778,24 @@ public sealed class LoupedeckWebConfigService : IDisposable
             .Replace("{{configurationKey}}", WebUtility.HtmlEncode(GetConfigurationKey(action)), StringComparison.Ordinal);
     }
 
+    private static string RenderPluginSnippet(LoupedeckPluginRegistration plugin)
+    {
+        return (plugin.HtmlSnippet ?? string.Empty)
+            .Replace("{{pluginId}}", WebUtility.HtmlEncode(plugin.PluginId), StringComparison.Ordinal)
+            .Replace("{{configurationKey}}", WebUtility.HtmlEncode(GetPluginConfigurationKey(plugin)), StringComparison.Ordinal);
+    }
+
     private static string GetConfigurationKey(LoupedeckActionRegistration registration)
     {
         return string.IsNullOrWhiteSpace(registration.ConfigurationKey)
             ? registration.ActionGuid.ToString()
+            : registration.ConfigurationKey;
+    }
+
+    private static string GetPluginConfigurationKey(LoupedeckPluginRegistration registration)
+    {
+        return string.IsNullOrWhiteSpace(registration.ConfigurationKey)
+            ? registration.PluginId
             : registration.ConfigurationKey;
     }
 
@@ -596,7 +820,10 @@ public sealed class LoupedeckWebConfigService : IDisposable
                 _persistedActionConfigurations[entry.Key] = entry.Value?.DeepClone();
             }
 
-            Log($"Loaded {_persistedActionConfigurations.Count} persisted action configuration(s).");
+            _persistedPluginConfiguration = persisted.PluginConfiguration?.DeepClone();
+            _pluginConfiguration = _persistedPluginConfiguration?.DeepClone();
+
+            Log($"Loaded {_persistedActionConfigurations.Count} persisted action configuration(s) and {(persisted.PluginConfiguration is null ? 0 : 1)} plugin configuration(s).");
         }
         catch (JsonException ex)
         {
@@ -612,18 +839,20 @@ public sealed class LoupedeckWebConfigService : IDisposable
             return;
         }
 
-        Dictionary<string, JsonNode?> snapshot;
+        Dictionary<string, JsonNode?> actionSnapshot;
+        JsonNode? pluginSnapshot;
         lock (_sync)
         {
-            snapshot = _persistedActionConfigurations.ToDictionary(
+            actionSnapshot = _persistedActionConfigurations.ToDictionary(
                 static entry => entry.Key,
                 static entry => entry.Value?.DeepClone(),
                 StringComparer.OrdinalIgnoreCase);
+            pluginSnapshot = _persistedPluginConfiguration?.DeepClone();
         }
 
-        var persisted = new PersistedLoupedeckConfig(1, snapshot);
+        var persisted = new PersistedLoupedeckConfig(1, actionSnapshot, pluginSnapshot);
         store.Save(JsonSerializer.Serialize(persisted, JsonOptions));
-        Log($"Persisted {snapshot.Count} action configuration(s).");
+        Log($"Persisted {actionSnapshot.Count} action configuration(s) and {(pluginSnapshot is null ? 0 : 1)} plugin configuration(s).");
     }
 
     private static bool IsLoopbackRequest(HttpListenerRequest request)

@@ -14,4 +14,10 @@ public sealed class LoupedeckWebConfigOptions
     public string Host { get; init; } = "127.0.0.1";
 
     public ILoupedeckConfigStore? ConfigStore { get; init; }
+
+    public bool AutoDeactivateWhenBrowserClosed { get; init; } = true;
+
+    public TimeSpan BrowserDisconnectGracePeriod { get; init; } = TimeSpan.FromSeconds(3);
+
+    public TimeSpan SseHeartbeatInterval { get; init; } = TimeSpan.FromSeconds(2);
 }

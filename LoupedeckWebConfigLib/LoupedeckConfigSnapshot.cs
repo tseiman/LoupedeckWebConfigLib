@@ -5,5 +5,6 @@ namespace LoupedeckWebConfigLib;
 
 public sealed record LoupedeckConfigSnapshot(
     LoupedeckPluginRegistration? Plugin,
+    JsonNode? PluginConfiguration,
     IReadOnlyList<LoupedeckActionRegistration> Actions,
     IReadOnlyDictionary<Guid, JsonNode?> ActionConfigurations);

@@ -17,12 +17,33 @@ LoupedeckWebConfig.RegisterPlugin(new LoupedeckPluginRegistration(
     PluginId: "sample-plugin",
     Title: "Sample Loupedeck Plugin",
     Heading: "Sample Plugin Configuration",
-    Description: "Console smoke test for LoupedeckWebConfigLib."));
+    Description: "Console smoke test for LoupedeckWebConfigLib.",
+    Parameters:
+    [
+        new ConfigParameterDefinition("deviceIp", ConfigParameterType.String, "Device IP", "192.168.10.20"),
+        new ConfigParameterDefinition("devicePath", ConfigParameterType.String, "Device path", "/dev/video0"),
+        new ConfigParameterDefinition("mediaDirectory", ConfigParameterType.String, "Media directory", "/tmp")
+    ],
+    HtmlSnippet: EmbeddedTextResource.Load<Program>("Resources.PluginSettings.html"),
+    ConfigurationKey: "sample-plugin-settings"), configuration =>
+{
+    Console.WriteLine("Plugin saved configuration:");
+    Console.WriteLine(configuration?.ToJsonString() ?? "null");
+});
+LoupedeckWebConfig.UpdatePluginConfiguration(JsonNode.Parse("""
+{
+  "deviceIp": "192.168.10.42",
+  "devicePath": "/dev/loupedeck-test",
+  "mediaDirectory": "/tmp/loupedeck-media"
+}
+"""));
 
 var sampleAction = new SampleAction();
 var secondAction = new SecondSampleAction();
+var selectSampleAction = new SelectSampleAction();
 LoupedeckWebConfig.RegisterAction(sampleAction);
 LoupedeckWebConfig.RegisterAction(secondAction);
+LoupedeckWebConfig.RegisterAction(selectSampleAction);
 
 var uri = LoupedeckWebConfig.ActivateConfig();
 Console.WriteLine($"Service URL: {uri}");
@@ -37,26 +58,50 @@ var sampleConfig = await httpClient.GetStringAsync(new Uri(uri, $"actions/{sampl
 Console.WriteLine("Sample action current config:");
 Console.WriteLine(sampleConfig);
 
-using var sseResponse = await httpClient.GetAsync(new Uri(uri, "events"), HttpCompletionOption.ResponseHeadersRead);
-sseResponse.EnsureSuccessStatusCode();
-using var sseReader = new StreamReader(await sseResponse.Content.ReadAsStreamAsync());
-Console.WriteLine($"SSE event: {await ReadNextSseEventAsync(sseReader)}");
+if (!openBrowser)
+{
+    using var sseResponse = await httpClient.GetAsync(new Uri(uri, "events"), HttpCompletionOption.ResponseHeadersRead);
+    sseResponse.EnsureSuccessStatusCode();
+    using var sseReader = new StreamReader(await sseResponse.Content.ReadAsStreamAsync());
+    Console.WriteLine($"SSE event: {await ReadNextSseEventAsync(sseReader)}");
 
-secondAction.EnableExpertMode();
-LoupedeckWebConfig.UpdateActionRegistration(secondAction);
-Console.WriteLine($"SSE event: {await ReadNextSseEventAsync(sseReader)}");
+    secondAction.EnableExpertMode();
+    LoupedeckWebConfig.UpdateActionRegistration(secondAction);
+    Console.WriteLine($"SSE event: {await ReadNextSseEventAsync(sseReader)}");
+}
+else
+{
+    secondAction.EnableExpertMode();
+    LoupedeckWebConfig.UpdateActionRegistration(secondAction);
+}
 
 var savePayload = new Dictionary<string, object?>
 {
-    [sampleAction.Registration.ActionGuid.ToString()] = new
+    ["plugin"] = new
     {
-        buttonText = "Configured from console",
-        repeatCount = 3,
-        enabled = true
+        deviceIp = "192.168.10.42",
+        devicePath = "/dev/loupedeck-test",
+        mediaDirectory = "/tmp/loupedeck-media"
     },
-    [secondAction.Registration.ActionGuid.ToString()] = new
+    ["actions"] = new Dictionary<string, object?>
     {
-        mode = "advanced"
+        [sampleAction.Registration.ActionGuid.ToString()] = new
+        {
+            buttonText = "Configured from console",
+            repeatCount = 3,
+            enabled = true
+        },
+        [secondAction.Registration.ActionGuid.ToString()] = new
+        {
+            mode = "advanced"
+        },
+        [selectSampleAction.Registration.ActionGuid.ToString()] = new
+        {
+            simpleSingle = "camera-b",
+            simpleMulti = new[] { "camera-a", "camera-c" },
+            richSingle = "program",
+            richMulti = new[] { "macro-start", "macro-stop" }
+        }
     }
 };
 
@@ -66,7 +111,7 @@ saveResponse.EnsureSuccessStatusCode();
 Console.WriteLine("GetConfig() after batch save:");
 Console.WriteLine(LoupedeckWebConfig.GetConfig());
 
-if (interactive)
+if (interactive || openBrowser)
 {
     using var shutdown = new CancellationTokenSource();
     Console.CancelKeyPress += (_, eventArgs) =>
@@ -75,13 +120,23 @@ if (interactive)
         shutdown.Cancel();
     };
 
-    Console.WriteLine("Press Ctrl-C to stop the local config server.");
+    Console.WriteLine(openBrowser
+        ? "Press Ctrl-C or close the configuration browser window to stop the local config server."
+        : "Press Ctrl-C to stop the local config server.");
     try
     {
-        await Task.Delay(Timeout.InfiniteTimeSpan, shutdown.Token);
+        while (!shutdown.IsCancellationRequested && LoupedeckWebConfig.Shared.IsActive)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(250), shutdown.Token);
+        }
     }
     catch (OperationCanceledException)
     {
+    }
+
+    if (!shutdown.IsCancellationRequested)
+    {
+        Console.WriteLine("Configuration browser window closed; stopping test app.");
     }
 }
 
@@ -180,5 +235,58 @@ internal sealed class SecondSampleAction : ILoupedeckConfigAction
         var options = string.Join(Environment.NewLine, _modes.Select(mode => $"""    <option value="{mode}">{mode}</option>"""));
         return EmbeddedTextResource.Load<SecondSampleAction>("Resources.SecondSampleAction.html")
             .Replace("{{options}}", options, StringComparison.Ordinal);
+    }
+}
+
+internal sealed class SelectSampleAction : ILoupedeckConfigAction
+{
+    private readonly Guid _actionGuid = Guid.NewGuid();
+    private JsonNode? _configuration = JsonNode.Parse("""
+{
+  "simpleSingle": "camera-b",
+  "simpleMulti": ["camera-a", "camera-c"],
+  "richSingle": "program",
+  "richMulti": ["macro-start", "macro-stop"]
+}
+""");
+
+    private static readonly ConfigParameterOption[] CameraOptions =
+    [
+        new("camera-a", "Camera A", "Wide shot from the front camera."),
+        new("camera-b", "Camera B", "Close-up camera for the speaker."),
+        new("camera-c", "Camera C", "Fallback input for secondary content.")
+    ];
+
+    private static readonly ConfigParameterOption[] MacroOptions =
+    [
+        new("preview", "Preview", "Switch the selected input to preview."),
+        new("program", "Program", "Switch the selected input to program."),
+        new("macro-start", "Start macro", "Run the configured startup macro."),
+        new("macro-stop", "Stop macro", "Run the configured stop macro.")
+    ];
+
+    public LoupedeckActionRegistration Registration => new(
+        ActionGuid: _actionGuid,
+        Name: "Select Sample Action",
+        Parameters:
+        [
+            new ConfigParameterDefinition("simpleSingle", ConfigParameterType.Select, "Simple single select", "camera-a", CameraOptions),
+            new ConfigParameterDefinition("simpleMulti", ConfigParameterType.Select, "Simple multi select", null, CameraOptions),
+            new ConfigParameterDefinition("richSingle", ConfigParameterType.Select, "Rich single select", "preview", MacroOptions),
+            new ConfigParameterDefinition("richMulti", ConfigParameterType.Select, "Rich multi select", null, MacroOptions)
+        ],
+        HtmlSnippet: EmbeddedTextResource.Load<SelectSampleAction>("Resources.SelectSampleAction.html"),
+        ConfigurationKey: "select-sample-action");
+
+    public JsonNode? GetConfiguration()
+    {
+        return _configuration?.DeepClone();
+    }
+
+    public void OnConfigurationUpdated(JsonNode? configuration)
+    {
+        _configuration = configuration?.DeepClone();
+        Console.WriteLine("SelectSampleAction saved configuration:");
+        Console.WriteLine(_configuration?.ToJsonString() ?? "null");
     }
 }

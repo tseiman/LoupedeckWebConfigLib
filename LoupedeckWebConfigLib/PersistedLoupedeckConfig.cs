@@ -5,4 +5,5 @@ namespace LoupedeckWebConfigLib;
 
 internal sealed record PersistedLoupedeckConfig(
     int Version,
-    IReadOnlyDictionary<string, JsonNode?> ActionConfigurations);
+    IReadOnlyDictionary<string, JsonNode?> ActionConfigurations,
+    JsonNode? PluginConfiguration = null);

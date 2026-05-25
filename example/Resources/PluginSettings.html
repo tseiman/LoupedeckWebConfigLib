@@ -1,0 +1,15 @@
+<label>
+  Device IP
+  <input inputmode="decimal" lwcl-config-key="deviceIp" lwcl-default="192.168.10.20" lwcl-check-regex="(?:(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})\.){3}(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})">
+</label>
+<label>
+  Device path
+  <input lwcl-config-key="devicePath" lwcl-default="/dev/video0" lwcl-check-regex=".{1,255}">
+</label>
+<label>
+  Media directory
+  <input lwcl-config-key="mediaDirectory" lwcl-default="/tmp" lwcl-check-regex=".{1,255}">
+</label>
+<script>
+  window.registerLoupedeckPluginAutoConfig();
+</script>

@@ -30,10 +30,27 @@ namespace Loupedeck.LoupedeckAtemControlerPlugin
             LoupedeckWebConfig.RegisterPlugin(new LoupedeckPluginRegistration(
                 PluginId: "loupedeck-atem-controller",
                 Title: "ATEM Controller",
-                Heading: "ATEM Controller Configuration"));
+                Heading: "ATEM Controller Configuration",
+                Parameters:
+                [
+                    new ConfigParameterDefinition("deviceIp", ConfigParameterType.String, "Device IP"),
+                    new ConfigParameterDefinition("devicePath", ConfigParameterType.String, "Device path"),
+                    new ConfigParameterDefinition("mediaDirectory", ConfigParameterType.String, "Media directory")
+                ],
+                HtmlSnippet: EmbeddedTextResource.Load<LoupedeckAtemControlerPlugin>("Resources.PluginSettings.html"),
+                ConfigurationKey: "atem-controller-settings"), this.OnPluginConfigurationUpdated);
 
             PluginReady?.Invoke();
 
+            ...
+        }
+
+        // Receives saved plugin-wide settings such as connection and directory values.
+        // Parameters:
+        // - configuration: The JSON object saved from the plugin settings section, or null when no settings exist yet.
+        // Returns: Nothing.
+        private void OnPluginConfigurationUpdated(System.Text.Json.Nodes.JsonNode? configuration)
+        {
             ...
         }
 

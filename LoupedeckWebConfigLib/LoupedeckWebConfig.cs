@@ -38,6 +38,11 @@ public static class LoupedeckWebConfig
         Shared.RegisterPlugin(plugin);
     }
 
+    public static void RegisterPlugin(LoupedeckPluginRegistration plugin, Action<System.Text.Json.Nodes.JsonNode?> configurationUpdated)
+    {
+        Shared.RegisterPlugin(plugin, configurationUpdated);
+    }
+
     public static void RegisterAction(ILoupedeckConfigAction action)
     {
         Shared.RegisterAction(action);
@@ -51,6 +56,11 @@ public static class LoupedeckWebConfig
     public static void UpdateActionConfiguration(ILoupedeckConfigAction action)
     {
         Shared.UpdateActionConfiguration(action);
+    }
+
+    public static void UpdatePluginConfiguration(System.Text.Json.Nodes.JsonNode? configuration)
+    {
+        Shared.UpdatePluginConfiguration(configuration);
     }
 
     public static Uri ActivateConfig()
@@ -71,5 +81,10 @@ public static class LoupedeckWebConfig
     public static System.Text.Json.Nodes.JsonNode? GetActionConfiguration(Guid actionGuid)
     {
         return Shared.GetActionConfiguration(actionGuid);
+    }
+
+    public static System.Text.Json.Nodes.JsonNode? GetPluginConfiguration()
+    {
+        return Shared.GetPluginConfiguration();
     }
 }
