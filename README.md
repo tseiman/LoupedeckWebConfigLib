@@ -231,7 +231,50 @@ LoupedeckWebConfig.Configure(new LoupedeckWebConfigOptions
 {
     ConfigStore = new DelegateLoupedeckConfigStore(
         load: () => this.TryGetPluginSetting(ConfigSettingName, out var json) ? json : null,
-        save: json => this.SetPluginSetting(ConfigSettingName, json, backupOnline: false))
+        save: json => this.SetPluginSetting(ConfigSettingName, json, backupOnline: false)),
+    EnableStdoutLogging = false,
+#if DEBUG
+    MinimumLogLevel = LoupedeckWebConfigLogLevel.Verbose,
+#else
+    MinimumLogLevel = LoupedeckWebConfigLogLevel.Warning,
+#endif
+    LogLifecycleMessages = true,
+    LogMessage = (level, text) =>
+    {
+        switch (level)
+        {
+            case LoupedeckWebConfigLogLevel.Verbose:
+                PluginLog.Verbose(text);
+                break;
+            case LoupedeckWebConfigLogLevel.Info:
+                PluginLog.Info(text);
+                break;
+            case LoupedeckWebConfigLogLevel.Warning:
+                PluginLog.Warning(text);
+                break;
+            case LoupedeckWebConfigLogLevel.Error:
+                PluginLog.Error(text);
+                break;
+        }
+    },
+    LogException = (level, exception, text) =>
+    {
+        switch (level)
+        {
+            case LoupedeckWebConfigLogLevel.Verbose:
+                PluginLog.Verbose(exception, text);
+                break;
+            case LoupedeckWebConfigLogLevel.Info:
+                PluginLog.Info(exception, text);
+                break;
+            case LoupedeckWebConfigLogLevel.Warning:
+                PluginLog.Warning(exception, text);
+                break;
+            case LoupedeckWebConfigLogLevel.Error:
+                PluginLog.Error(exception, text);
+                break;
+        }
+    }
 });
 ~~~
 
@@ -298,7 +341,7 @@ dotnet build LoupedeckWebConfigLib.sln -c Release
 
 Release builds only build `LoupedeckWebConfigLib`; the console smoke-test project is excluded from the solution's Release build configuration.
 
-In `Debug`, `EnableStdoutLogging` is enabled by default. In `Release`, it is disabled by default, but it can be enabled through `LoupedeckWebConfigOptions`.
+In `Debug`, stdout logging is enabled by default and `MinimumLogLevel` is `Verbose`. In `Release`, stdout logging is disabled by default and `MinimumLogLevel` is `Warning`; lifecycle messages such as server start/stop are still emitted when `LogLifecycleMessages` is true. Use `LogMessage` and `LogException` to map library logs to plugin logging without adding any Loupedeck SDK dependency to the library.
 
 ### Loupedeck SDK Command Example
 

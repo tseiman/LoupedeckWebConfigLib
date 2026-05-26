@@ -60,7 +60,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
         }
 
         configurationUpdated?.Invoke(pluginConfiguration?.DeepClone());
-        Log($"Registered plugin '{plugin.PluginId}' with title '{plugin.Title}'.");
+        LogVerbose($"Registered plugin '{plugin.PluginId}' with title '{plugin.Title}'.");
     }
 
     public void RegisterAction(ILoupedeckConfigAction action)
@@ -80,7 +80,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
             _actionConfigurations[registration.ActionGuid] = action.GetConfiguration()?.DeepClone();
         }
 
-        Log($"Registered action '{registration.Name}' ({registration.ActionGuid}).");
+        LogVerbose($"Registered action '{registration.Name}' ({registration.ActionGuid}).");
     }
 
     public void UpdateActionRegistration(ILoupedeckConfigAction action)
@@ -109,7 +109,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
         }
 
         PersistConfigurations();
-        Log($"Refreshed configuration snapshot for action {registration.ActionGuid}.");
+        LogVerbose($"Refreshed configuration snapshot for action {registration.ActionGuid}.");
         _ = BroadcastServerEventAsync("configuration-updated", new
         {
             actionGuid = registration.ActionGuid
@@ -146,7 +146,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
                 _cancellation = new CancellationTokenSource();
                 _serverTask = Task.Run(() => RunServerAsync(_listener, _cancellation.Token));
                 ServiceUri = uri;
-                Log($"Started local config web server at {uri}.");
+                LogInfo($"Started local config web server at {uri}.", isLifecycle: true);
             }
         }
 
@@ -196,7 +196,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
         }
 
         cancellation?.Dispose();
-        Log("Stopped local config web server.");
+        LogInfo("Stopped local config web server.", isLifecycle: true);
     }
 
     public LoupedeckConfigSnapshot GetConfigSnapshot()
@@ -257,8 +257,13 @@ public sealed class LoupedeckWebConfigService : IDisposable
             {
                 break;
             }
+            catch (Exception ex)
+            {
+                LogError(ex, "Local config web server accept loop failed.");
+                break;
+            }
 
-            _ = Task.Run(() => HandleRequestAsync(context), cancellationToken);
+            _ = HandleRequestAsync(context);
         }
     }
 
@@ -273,7 +278,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
             }
 
             var path = context.Request.Url?.AbsolutePath ?? "/";
-            Log($"{context.Request.HttpMethod} {path}");
+            LogVerbose($"{context.Request.HttpMethod} {path}");
 
             if (context.Request.HttpMethod == "GET" && path == "/")
             {
@@ -346,11 +351,11 @@ public sealed class LoupedeckWebConfigService : IDisposable
         }
         catch (Exception ex) when (IsClientDisconnect(ex))
         {
-            Log($"Client disconnected while handling request: {ex.Message}");
+            LogVerbose($"Client disconnected while handling request: {ex.Message}");
         }
         catch (Exception ex)
         {
-            Log($"Request failed: {ex}");
+            LogError(ex, "Request failed.");
             if (context.Response.OutputStream.CanWrite)
             {
                 await WriteResponseAsync(context.Response, 500, "text/plain; charset=utf-8", "Internal server error").ConfigureAwait(false);
@@ -529,7 +534,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
         }
 
         PersistConfigurations();
-        Log($"Stored configuration for action {actionGuid}.");
+        LogVerbose($"Stored configuration for action {actionGuid}.");
         return true;
     }
 
@@ -545,7 +550,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
 
         callback?.Invoke(config?.DeepClone());
         PersistConfigurations();
-        Log("Stored plugin configuration.");
+        LogVerbose("Stored plugin configuration.");
     }
 
     private async Task HandleServerEventsAsync(HttpListenerContext context)
@@ -568,7 +573,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
             _sseClients.Add(client);
         }
 
-        Log($"SSE client connected ({client.Id}).");
+        LogVerbose($"SSE client connected ({client.Id}).");
 
         try
         {
@@ -585,7 +590,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
         }
         catch (Exception ex) when (IsClientDisconnect(ex))
         {
-            Log($"SSE client disconnected ({client.Id}): {ex.Message}");
+            LogVerbose($"SSE client disconnected ({client.Id}): {ex.Message}");
         }
         finally
         {
@@ -597,7 +602,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
             client.WriteLock.Dispose();
             writer.Dispose();
             response.Close();
-            Log($"SSE client closed ({client.Id}).");
+            LogVerbose($"SSE client closed ({client.Id}).");
             ScheduleAutoDeactivateIfNoBrowserClients();
         }
     }
@@ -635,7 +640,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
                     }
                 }
 
-                Log("No browser clients remain; stopping local config web server.");
+                LogInfo("No browser clients remain; stopping local config web server.", isLifecycle: true);
                 DeactivateConfig();
             }
             catch (OperationCanceledException)
@@ -823,11 +828,11 @@ public sealed class LoupedeckWebConfigService : IDisposable
             _persistedPluginConfiguration = persisted.PluginConfiguration?.DeepClone();
             _pluginConfiguration = _persistedPluginConfiguration?.DeepClone();
 
-            Log($"Loaded {_persistedActionConfigurations.Count} persisted action configuration(s) and {(persisted.PluginConfiguration is null ? 0 : 1)} plugin configuration(s).");
+            LogVerbose($"Loaded {_persistedActionConfigurations.Count} persisted action configuration(s) and {(persisted.PluginConfiguration is null ? 0 : 1)} plugin configuration(s).");
         }
         catch (JsonException ex)
         {
-            Log($"Could not load persisted configuration: {ex.Message}");
+            LogWarning(ex, "Could not load persisted configuration.");
         }
     }
 
@@ -852,7 +857,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
 
         var persisted = new PersistedLoupedeckConfig(1, actionSnapshot, pluginSnapshot);
         store.Save(JsonSerializer.Serialize(persisted, JsonOptions));
-        Log($"Persisted {actionSnapshot.Count} action configuration(s) and {(pluginSnapshot is null ? 0 : 1)} plugin configuration(s).");
+        LogVerbose($"Persisted {actionSnapshot.Count} action configuration(s) and {(pluginSnapshot is null ? 0 : 1)} plugin configuration(s).");
     }
 
     private static bool IsLoopbackRequest(HttpListenerRequest request)
@@ -905,19 +910,64 @@ public sealed class LoupedeckWebConfigService : IDisposable
                     ? new ProcessStartInfo("open", uri.ToString())
                     : new ProcessStartInfo("xdg-open", uri.ToString());
             process.Start();
-            Log($"Opened default browser for {uri}.");
+            LogVerbose($"Opened default browser for {uri}.");
         }
         catch (Exception ex)
         {
-            Log($"Could not open default browser: {ex.Message}");
+            LogWarning(ex, "Could not open default browser.");
         }
     }
 
-    private void Log(string message)
+    private void LogVerbose(string message) => Log(LoupedeckWebConfigLogLevel.Verbose, message);
+
+    private void LogInfo(string message, bool isLifecycle = false) => Log(LoupedeckWebConfigLogLevel.Info, message, isLifecycle);
+
+    private void LogWarning(Exception exception, string message) => Log(LoupedeckWebConfigLogLevel.Warning, message, exception);
+
+    private void LogError(Exception exception, string message) => Log(LoupedeckWebConfigLogLevel.Error, message, exception);
+
+    private void Log(LoupedeckWebConfigLogLevel level, string message, Exception? exception = null)
     {
-        if (_options.EnableStdoutLogging)
+        Log(level, message, isLifecycle: false, exception);
+    }
+
+    private void Log(LoupedeckWebConfigLogLevel level, string message, bool isLifecycle, Exception? exception = null)
+    {
+        if (level < _options.MinimumLogLevel && !(isLifecycle && _options.LogLifecycleMessages))
         {
-            Console.WriteLine($"[LoupedeckWebConfigLib] {message}");
+            return;
+        }
+
+        if (exception is not null && _options.LogException is not null)
+        {
+            _options.LogException(level, exception, message);
+            return;
+        }
+
+        if (_options.LogMessage is not null)
+        {
+            _options.LogMessage(level, exception is null ? message : $"{message} {exception}");
+            return;
+        }
+
+        if (!_options.EnableStdoutLogging)
+        {
+            return;
+        }
+
+        var text = $"[LoupedeckWebConfigLib] {level}: {message}";
+        if (exception is not null)
+        {
+            text = $"{text} {exception}";
+        }
+
+        if (level >= LoupedeckWebConfigLogLevel.Warning)
+        {
+            Console.Error.WriteLine(text);
+        }
+        else
+        {
+            Console.WriteLine(text);
         }
     }
 

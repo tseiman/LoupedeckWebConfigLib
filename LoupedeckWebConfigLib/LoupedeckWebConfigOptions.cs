@@ -11,6 +11,18 @@ public sealed class LoupedeckWebConfigOptions
     public bool EnableStdoutLogging { get; init; }
 #endif
 
+#if DEBUG
+    public LoupedeckWebConfigLogLevel MinimumLogLevel { get; init; } = LoupedeckWebConfigLogLevel.Verbose;
+#else
+    public LoupedeckWebConfigLogLevel MinimumLogLevel { get; init; } = LoupedeckWebConfigLogLevel.Warning;
+#endif
+
+    public bool LogLifecycleMessages { get; init; } = true;
+
+    public Action<LoupedeckWebConfigLogLevel, string>? LogMessage { get; init; }
+
+    public Action<LoupedeckWebConfigLogLevel, Exception, string>? LogException { get; init; }
+
     public string Host { get; init; } = "127.0.0.1";
 
     public ILoupedeckConfigStore? ConfigStore { get; init; }
