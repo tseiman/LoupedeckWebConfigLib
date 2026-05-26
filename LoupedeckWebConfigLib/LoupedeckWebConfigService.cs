@@ -761,7 +761,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
         var pluginSettingsHtml = BuildPluginHtml(snapshot.Plugin);
         var actionsHtml = string.Join(Environment.NewLine, snapshot.Actions.Select(BuildActionHtml));
         var bootstrapJson = JsonSerializer.Serialize(snapshot, JsonOptions);
-        LogVerbose($"Rendering config HTML with actions=[{string.Join(", ", snapshot.Actions.Select(static action => $"{action.Name}:{action.ActionGuid}:params={action.Parameters.Count}"))}]");
+        LogVerbose($"Rendering config HTML with actions=[{string.Join(", ", snapshot.Actions.Select(static action => $"{action.Name}:{action.ActionGuid}:params={action.Parameters.Count}:options=[{DescribeParameterOptions(action)}]"))}]");
 
         return html
             .Replace("{{title}}", WebUtility.HtmlEncode(title), StringComparison.Ordinal)
