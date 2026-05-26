@@ -18,6 +18,7 @@ Calling `ActivateConfig()` while the local server is already running reuses the 
   - [LWCL HTML Attributes](#lwcl-html-attributes)
   - [Configuration Ownership](#configuration-ownership)
 - [Persistent Storage](#persistent-storage)
+  - [Logging Delegate Mapping](#logging-delegate-mapping)
 - [Runtime Updates](#runtime-updates)
   - [Updating Dynamic Parameters](#updating-dynamic-parameters)
 - [HTTP API](#http-api)
@@ -239,46 +240,78 @@ LoupedeckWebConfig.Configure(new LoupedeckWebConfigOptions
     MinimumLogLevel = LoupedeckWebConfigLogLevel.Warning,
 #endif
     LogLifecycleMessages = true,
-    LogMessage = (level, text) =>
-    {
-        switch (level)
-        {
-            case LoupedeckWebConfigLogLevel.Verbose:
-                PluginLog.Verbose(text);
-                break;
-            case LoupedeckWebConfigLogLevel.Info:
-                PluginLog.Info(text);
-                break;
-            case LoupedeckWebConfigLogLevel.Warning:
-                PluginLog.Warning(text);
-                break;
-            case LoupedeckWebConfigLogLevel.Error:
-                PluginLog.Error(text);
-                break;
-        }
-    },
-    LogException = (level, exception, text) =>
-    {
-        switch (level)
-        {
-            case LoupedeckWebConfigLogLevel.Verbose:
-                PluginLog.Verbose(exception, text);
-                break;
-            case LoupedeckWebConfigLogLevel.Info:
-                PluginLog.Info(exception, text);
-                break;
-            case LoupedeckWebConfigLogLevel.Warning:
-                PluginLog.Warning(exception, text);
-                break;
-            case LoupedeckWebConfigLogLevel.Error:
-                PluginLog.Error(exception, text);
-                break;
-        }
-    }
+    LogMessage = LogWebConfigMessage,
+    LogException = LogWebConfigException
 });
 ~~~
 
 The library loads the persisted JSON when the service is configured. When plugin settings are registered, the persisted plugin configuration is passed to the plugin callback. When actions register, matching stored values are applied through `OnConfigurationUpdated(...)` using each action's stable `ConfigurationKey`.
+
+### Logging Delegate Mapping
+
+`LoupedeckWebConfigLib` has no dependency on the Loupedeck SDK. To route logs into a plugin helper like this:
+
+~~~csharp
+internal static class PluginLog
+{
+    [Conditional("DEBUG")]
+    public static void Verbose(String text) => ...
+
+    [Conditional("DEBUG")]
+    public static void Verbose(Exception ex, String text) => ...
+
+    public static void Info(String text) => ...
+    public static void Info(Exception ex, String text) => ...
+    public static void Warning(String text) => ...
+    public static void Warning(Exception ex, String text) => ...
+    public static void Error(String text) => ...
+    public static void Error(Exception ex, String text) => ...
+}
+~~~
+
+add two mapping methods in the plugin main class:
+
+~~~csharp
+private static void LogWebConfigMessage(LoupedeckWebConfigLogLevel level, String text)
+{
+    switch (level)
+    {
+        case LoupedeckWebConfigLogLevel.Verbose:
+            PluginLog.Verbose(text);
+            break;
+        case LoupedeckWebConfigLogLevel.Info:
+            PluginLog.Info(text);
+            break;
+        case LoupedeckWebConfigLogLevel.Warning:
+            PluginLog.Warning(text);
+            break;
+        case LoupedeckWebConfigLogLevel.Error:
+            PluginLog.Error(text);
+            break;
+    }
+}
+
+private static void LogWebConfigException(LoupedeckWebConfigLogLevel level, Exception exception, String text)
+{
+    switch (level)
+    {
+        case LoupedeckWebConfigLogLevel.Verbose:
+            PluginLog.Verbose(exception, text);
+            break;
+        case LoupedeckWebConfigLogLevel.Info:
+            PluginLog.Info(exception, text);
+            break;
+        case LoupedeckWebConfigLogLevel.Warning:
+            PluginLog.Warning(exception, text);
+            break;
+        case LoupedeckWebConfigLogLevel.Error:
+            PluginLog.Error(exception, text);
+            break;
+    }
+}
+~~~
+
+In `Debug`, use `MinimumLogLevel = LoupedeckWebConfigLogLevel.Verbose` to get request-level detail. In `Release`, use `Warning`; `LogLifecycleMessages = true` still logs short start/stop messages.
 
 For larger files or non-SDK hosts, use the plugin data directory and `FileLoupedeckConfigStore`:
 
