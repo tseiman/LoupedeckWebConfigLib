@@ -3,8 +3,8 @@ namespace LoupedeckWebConfigLib;
 
 public enum LoupedeckWebConfigLogLevel
 {
-    Verbose,
-    Info,
-    Warning,
-    Error
+    Verbose = 0,
+    Info = 1,
+    Warning = 2,
+    Error = 3
 }

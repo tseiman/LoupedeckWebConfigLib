@@ -86,7 +86,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
             _actionConfigurations[registration.ActionGuid] = action.GetConfiguration()?.DeepClone();
         }
 
-        LogVerbose($"Registered action '{registration.Name}' ({registration.ActionGuid}).");
+        LogVerbose($"Registered action '{registration.Name}' ({registration.ActionGuid}) key='{GetConfigurationKey(registration)}' parameters={registration.Parameters.Count} options=[{DescribeParameterOptions(registration)}].");
     }
 
     public void UpdateActionRegistration(ILoupedeckConfigAction action)
@@ -95,6 +95,21 @@ public sealed class LoupedeckWebConfigService : IDisposable
         _ = BroadcastServerEventAsync("registration-updated", new
         {
             actionGuid = action.Registration.ActionGuid
+        });
+    }
+
+    public void UnregisterAction(Guid actionGuid)
+    {
+        lock (_sync)
+        {
+            _actions.Remove(actionGuid);
+            _actionConfigurations.Remove(actionGuid);
+        }
+
+        LogVerbose($"Unregistered action {actionGuid}.");
+        _ = BroadcastServerEventAsync("registration-updated", new
+        {
+            actionGuid
         });
     }
 
@@ -219,7 +234,9 @@ public sealed class LoupedeckWebConfigService : IDisposable
 
     public string GetConfig()
     {
-        return JsonSerializer.Serialize(GetConfigSnapshot(), JsonOptions);
+        var json = JsonSerializer.Serialize(GetConfigSnapshot(), JsonOptions);
+        LogVerbose($"Config JSON: {json}");
+        return json;
     }
 
     public JsonNode? GetActionConfiguration(Guid actionGuid)
@@ -744,6 +761,7 @@ public sealed class LoupedeckWebConfigService : IDisposable
         var pluginSettingsHtml = BuildPluginHtml(snapshot.Plugin);
         var actionsHtml = string.Join(Environment.NewLine, snapshot.Actions.Select(BuildActionHtml));
         var bootstrapJson = JsonSerializer.Serialize(snapshot, JsonOptions);
+        LogVerbose($"Rendering config HTML with actions=[{string.Join(", ", snapshot.Actions.Select(static action => $"{action.Name}:{action.ActionGuid}:params={action.Parameters.Count}"))}]");
 
         return html
             .Replace("{{title}}", WebUtility.HtmlEncode(title), StringComparison.Ordinal)
@@ -813,6 +831,12 @@ public sealed class LoupedeckWebConfigService : IDisposable
         return string.IsNullOrWhiteSpace(registration.ConfigurationKey)
             ? registration.PluginId
             : registration.ConfigurationKey;
+    }
+
+    private static string DescribeParameterOptions(LoupedeckActionRegistration registration)
+    {
+        return string.Join(", ", registration.Parameters.Select(static parameter =>
+            $"{parameter.Name}:{(parameter.Options is null ? 0 : parameter.Options.Count)}"));
     }
 
     private void LoadPersistedConfiguration()

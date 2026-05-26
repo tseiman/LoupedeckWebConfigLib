@@ -53,6 +53,11 @@ public static class LoupedeckWebConfig
         Shared.UpdateActionRegistration(action);
     }
 
+    public static void UnregisterAction(Guid actionGuid)
+    {
+        Shared.UnregisterAction(actionGuid);
+    }
+
     public static void UpdateActionConfiguration(ILoupedeckConfigAction action)
     {
         Shared.UpdateActionConfiguration(action);
