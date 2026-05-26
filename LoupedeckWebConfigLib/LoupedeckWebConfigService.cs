@@ -12,6 +12,12 @@ namespace LoupedeckWebConfigLib;
 
 public sealed class LoupedeckWebConfigService : IDisposable
 {
+#if DEBUG
+    private const LoupedeckWebConfigLogLevel MinimumLogLevel = LoupedeckWebConfigLogLevel.Verbose;
+#else
+    private const LoupedeckWebConfigLogLevel MinimumLogLevel = LoupedeckWebConfigLogLevel.Warning;
+#endif
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -933,42 +939,13 @@ public sealed class LoupedeckWebConfigService : IDisposable
 
     private void Log(LoupedeckWebConfigLogLevel level, string message, bool isLifecycle, Exception? exception = null)
     {
-        if (level < _options.MinimumLogLevel && !(isLifecycle && _options.LogLifecycleMessages))
+        if (level < MinimumLogLevel && !(isLifecycle && _options.LogLifecycleMessages))
         {
             return;
         }
 
-        if (exception is not null && _options.LogException is not null)
-        {
-            _options.LogException(level, exception, message);
-            return;
-        }
-
-        if (_options.LogMessage is not null)
-        {
-            _options.LogMessage(level, exception is null ? message : $"{message} {exception}");
-            return;
-        }
-
-        if (!_options.EnableStdoutLogging)
-        {
-            return;
-        }
-
-        var text = $"[LoupedeckWebConfigLib] {level}: {message}";
-        if (exception is not null)
-        {
-            text = $"{text} {exception}";
-        }
-
-        if (level >= LoupedeckWebConfigLogLevel.Warning)
-        {
-            Console.Error.WriteLine(text);
-        }
-        else
-        {
-            Console.WriteLine(text);
-        }
+        var entry = new LoupedeckWebConfigLogEntry(level, message, exception);
+        (_options.Log ?? LoupedeckWebConfigLog.WriteToConsole)(entry);
     }
 
     private sealed record SseClient(Guid Id, HttpListenerResponse Response, StreamWriter Writer, SemaphoreSlim WriteLock);

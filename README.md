@@ -233,15 +233,16 @@ LoupedeckWebConfig.Configure(new LoupedeckWebConfigOptions
     ConfigStore = new DelegateLoupedeckConfigStore(
         load: () => this.TryGetPluginSetting(ConfigSettingName, out var json) ? json : null,
         save: json => this.SetPluginSetting(ConfigSettingName, json, backupOnline: false)),
-    EnableStdoutLogging = false,
-#if DEBUG
-    MinimumLogLevel = LoupedeckWebConfigLogLevel.Verbose,
-#else
-    MinimumLogLevel = LoupedeckWebConfigLogLevel.Warning,
-#endif
     LogLifecycleMessages = true,
-    LogMessage = LogWebConfigMessage,
-    LogException = LogWebConfigException
+    Log = LoupedeckWebConfigLog.FromDelegates(
+        verbose: PluginLog.Verbose,
+        info: PluginLog.Info,
+        warning: PluginLog.Warning,
+        error: PluginLog.Error,
+        verboseException: PluginLog.Verbose,
+        infoException: PluginLog.Info,
+        warningException: PluginLog.Warning,
+        errorException: PluginLog.Error)
 });
 ~~~
 
@@ -249,7 +250,9 @@ The library loads the persisted JSON when the service is configured. When plugin
 
 ### Logging Delegate Mapping
 
-`LoupedeckWebConfigLib` has no dependency on the Loupedeck SDK. To route logs into a plugin helper like this:
+`LoupedeckWebConfigLib` has no dependency on the Loupedeck SDK. If no `Log` delegate is configured, the library writes to stdout/stderr automatically. Debug builds emit verbose logs; Release builds emit warnings/errors plus lifecycle messages such as server start/stop.
+
+To route logs into a plugin helper like this:
 
 ~~~csharp
 internal static class PluginLog
@@ -269,49 +272,38 @@ internal static class PluginLog
 }
 ~~~
 
-add two mapping methods in the plugin main class:
+configure one `Log` delegate through the built-in adapter:
 
 ~~~csharp
-private static void LogWebConfigMessage(LoupedeckWebConfigLogLevel level, String text)
-{
-    switch (level)
-    {
-        case LoupedeckWebConfigLogLevel.Verbose:
-            PluginLog.Verbose(text);
-            break;
-        case LoupedeckWebConfigLogLevel.Info:
-            PluginLog.Info(text);
-            break;
-        case LoupedeckWebConfigLogLevel.Warning:
-            PluginLog.Warning(text);
-            break;
-        case LoupedeckWebConfigLogLevel.Error:
-            PluginLog.Error(text);
-            break;
-    }
-}
-
-private static void LogWebConfigException(LoupedeckWebConfigLogLevel level, Exception exception, String text)
-{
-    switch (level)
-    {
-        case LoupedeckWebConfigLogLevel.Verbose:
-            PluginLog.Verbose(exception, text);
-            break;
-        case LoupedeckWebConfigLogLevel.Info:
-            PluginLog.Info(exception, text);
-            break;
-        case LoupedeckWebConfigLogLevel.Warning:
-            PluginLog.Warning(exception, text);
-            break;
-        case LoupedeckWebConfigLogLevel.Error:
-            PluginLog.Error(exception, text);
-            break;
-    }
-}
+Log = LoupedeckWebConfigLog.FromDelegates(
+    verbose: PluginLog.Verbose,
+    info: PluginLog.Info,
+    warning: PluginLog.Warning,
+    error: PluginLog.Error,
+    verboseException: PluginLog.Verbose,
+    infoException: PluginLog.Info,
+    warningException: PluginLog.Warning,
+    errorException: PluginLog.Error)
 ~~~
 
-In `Debug`, use `MinimumLogLevel = LoupedeckWebConfigLogLevel.Verbose` to get request-level detail. In `Release`, use `Warning`; `LogLifecycleMessages = true` still logs short start/stop messages.
+For custom hosts, the same option also accepts a single delegate:
+
+~~~csharp
+Log = entry =>
+{
+    var text = entry.Exception is null
+        ? entry.Message
+        : $"{entry.Message} {entry.Exception}";
+
+    if (entry.Level >= LoupedeckWebConfigLogLevel.Warning)
+    {
+        Console.Error.WriteLine(text);
+        return;
+    }
+
+    Console.WriteLine(text);
+}
+~~~
 
 For larger files or non-SDK hosts, use the plugin data directory and `FileLoupedeckConfigStore`:
 
@@ -374,7 +366,7 @@ dotnet build LoupedeckWebConfigLib.sln -c Release
 
 Release builds only build `LoupedeckWebConfigLib`; the console smoke-test project is excluded from the solution's Release build configuration.
 
-In `Debug`, stdout logging is enabled by default and `MinimumLogLevel` is `Verbose`. In `Release`, stdout logging is disabled by default and `MinimumLogLevel` is `Warning`; lifecycle messages such as server start/stop are still emitted when `LogLifecycleMessages` is true. Use `LogMessage` and `LogException` to map library logs to plugin logging without adding any Loupedeck SDK dependency to the library.
+If no `Log` delegate is configured, the library writes to stdout/stderr automatically. Debug builds emit verbose logs; Release builds emit warnings/errors plus lifecycle messages such as server start/stop when `LogLifecycleMessages` is true.
 
 ### Loupedeck SDK Command Example
 

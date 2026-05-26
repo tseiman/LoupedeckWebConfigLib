@@ -9,7 +9,6 @@ var interactive = args.Contains("--interactive", StringComparer.OrdinalIgnoreCas
 LoupedeckWebConfig.Configure(new LoupedeckWebConfigOptions
 {
     OpenBrowser = openBrowser,
-    EnableStdoutLogging = true,
     ConfigStore = new FileLoupedeckConfigStore(Path.Combine(Path.GetTempPath(), "LoupedeckWebConfigLib.TestConsole", "config.json"))
 });
 

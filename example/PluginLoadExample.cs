@@ -20,15 +20,16 @@ namespace Loupedeck.LoupedeckAtemControlerPlugin
                     load: () => this.TryGetPluginSetting(WebConfigSettingName, out var json) ? json : null,
                     save: json => this.SetPluginSetting(WebConfigSettingName, json, backupOnline: false)),
                 OpenBrowser = true,
-                EnableStdoutLogging = false,
-#if DEBUG
-                MinimumLogLevel = LoupedeckWebConfigLogLevel.Verbose,
-#else
-                MinimumLogLevel = LoupedeckWebConfigLogLevel.Warning,
-#endif
                 LogLifecycleMessages = true,
-                LogMessage = LogWebConfigMessage,
-                LogException = LogWebConfigException
+                Log = LoupedeckWebConfigLog.FromDelegates(
+                    verbose: PluginLog.Verbose,
+                    info: PluginLog.Info,
+                    warning: PluginLog.Warning,
+                    error: PluginLog.Error,
+                    verboseException: PluginLog.Verbose,
+                    infoException: PluginLog.Info,
+                    warningException: PluginLog.Warning,
+                    errorException: PluginLog.Error)
             });
 
             LoupedeckWebConfig.RegisterPlugin(new LoupedeckPluginRegistration(
@@ -56,55 +57,6 @@ namespace Loupedeck.LoupedeckAtemControlerPlugin
         private void OnPluginConfigurationUpdated(System.Text.Json.Nodes.JsonNode? configuration)
         {
             ...
-        }
-
-        // Maps library log messages to the plugin log without adding a Loupedeck SDK dependency to the library.
-        // Parameters:
-        // - level: Severity from the web configuration library.
-        // - text: Message to write.
-        // Returns: Nothing.
-        private static void LogWebConfigMessage(LoupedeckWebConfigLogLevel level, String text)
-        {
-            switch (level)
-            {
-                case LoupedeckWebConfigLogLevel.Verbose:
-                    PluginLog.Verbose(text);
-                    break;
-                case LoupedeckWebConfigLogLevel.Info:
-                    PluginLog.Info(text);
-                    break;
-                case LoupedeckWebConfigLogLevel.Warning:
-                    PluginLog.Warning(text);
-                    break;
-                case LoupedeckWebConfigLogLevel.Error:
-                    PluginLog.Error(text);
-                    break;
-            }
-        }
-
-        // Maps library exception logs to the plugin log without adding a Loupedeck SDK dependency to the library.
-        // Parameters:
-        // - level: Severity from the web configuration library.
-        // - exception: Exception that caused the log entry.
-        // - text: Message to write.
-        // Returns: Nothing.
-        private static void LogWebConfigException(LoupedeckWebConfigLogLevel level, Exception exception, String text)
-        {
-            switch (level)
-            {
-                case LoupedeckWebConfigLogLevel.Verbose:
-                    PluginLog.Verbose(exception, text);
-                    break;
-                case LoupedeckWebConfigLogLevel.Info:
-                    PluginLog.Info(exception, text);
-                    break;
-                case LoupedeckWebConfigLogLevel.Warning:
-                    PluginLog.Warning(exception, text);
-                    break;
-                case LoupedeckWebConfigLogLevel.Error:
-                    PluginLog.Error(exception, text);
-                    break;
-            }
         }
 
         // Tears down the web config server and runs the plugin cleanup path.
