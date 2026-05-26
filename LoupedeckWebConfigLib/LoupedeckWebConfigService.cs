@@ -706,6 +706,11 @@ public sealed class LoupedeckWebConfigService : IDisposable
     {
         for (var current = exception; current is not null; current = current.InnerException)
         {
+            if (current is FileNotFoundException or DirectoryNotFoundException)
+            {
+                return false;
+            }
+
             if (current is IOException or ObjectDisposedException)
             {
                 return true;
@@ -886,13 +891,38 @@ public sealed class LoupedeckWebConfigService : IDisposable
 
     private static string LoadAsset(string fileName)
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "wwwroot", fileName);
-        if (!File.Exists(path))
+        var assembly = typeof(LoupedeckWebConfigService).Assembly;
+        var assemblyDirectory = Path.GetDirectoryName(assembly.Location);
+        var searchDirectories = new[]
         {
-            throw new FileNotFoundException($"Required web asset '{fileName}' was not found at '{path}'.", path);
+            assemblyDirectory,
+            AppContext.BaseDirectory
+        }
+            .Where(static directory => !string.IsNullOrWhiteSpace(directory))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        var searchedPaths = new List<string>();
+        foreach (var directory in searchDirectories)
+        {
+            var path = Path.Combine(directory!, "wwwroot", fileName);
+            searchedPaths.Add(path);
+            if (File.Exists(path))
+            {
+                return File.ReadAllText(path, Encoding.UTF8);
+            }
         }
 
-        return File.ReadAllText(path, Encoding.UTF8);
+        var resourceName = $"wwwroot/{fileName}";
+        using var stream = assembly.GetManifestResourceStream(resourceName);
+        if (stream is not null)
+        {
+            using var reader = new StreamReader(stream, Encoding.UTF8);
+            return reader.ReadToEnd();
+        }
+
+        throw new FileNotFoundException(
+            $"Required web asset '{fileName}' was not found. Searched files: {string.Join(", ", searchedPaths)}. Searched resource: {resourceName}.",
+            searchedPaths.FirstOrDefault());
     }
 
     private static async Task WriteResponseAsync(HttpListenerResponse response, int statusCode, string contentType, string body)

@@ -12,6 +12,9 @@
       <Pack>true</Pack>
       <PackagePath>contentFiles\any\any\wwwroot\</PackagePath>
     </Content>
+    <EmbeddedResource Include="wwwroot\**\*">
+      <LogicalName>wwwroot/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>
