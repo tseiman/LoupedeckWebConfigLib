@@ -61,6 +61,26 @@
   const getOptionLabel = (field, value) =>
     field.querySelector(`.rich-option[data-value="${CSS.escape(value)}"] .rich-option-title`)?.textContent || value;
 
+  const normalizeOptions = (parameter, allowEmpty) => {
+    const options = (parameter?.options || []).map((option) => {
+      if (option && typeof option === "object") {
+        return {
+          value: String(option.value ?? option.label ?? ""),
+          label: String(option.label ?? option.value ?? ""),
+          description: String(option.description ?? "")
+        };
+      }
+
+      return { value: String(option), label: String(option), description: "" };
+    });
+
+    if (allowEmpty && !options.some((option) => option.value === "")) {
+      options.unshift({ value: "", label: "None", description: "" });
+    }
+
+    return options;
+  };
+
   const updateRichSelectSummary = (field) => {
     const summary = field.querySelector(".rich-select-summary");
     if (!summary) {
@@ -165,17 +185,7 @@
     const currentValue = isMultiple(field)
       ? Array.from(field.selectedOptions).map((option) => option.value)
       : field.value;
-    const options = parameter.options.map((option) => {
-      if (option && typeof option === "object") {
-        return {
-          value: String(option.value ?? option.label ?? ""),
-          label: String(option.label ?? option.value ?? ""),
-          description: String(option.description ?? "")
-        };
-      }
-
-      return { value: String(option), label: String(option), description: "" };
-    });
+    const options = normalizeOptions(parameter, !isMultiple(field) && parameter.required !== true);
 
     field.innerHTML = options.map((option) => `<option value="${option.value}">${option.label}</option>`).join("");
     if (Array.isArray(currentValue)) {
@@ -197,10 +207,10 @@
     field.classList.add("rich-select");
     field.style.setProperty("--rich-select-visible-options", String(Math.max(1, Number.parseInt(field.getAttribute("size") || "5", 10) || 5)));
 
-    const optionsHtml = parameter.options.map((option) => {
-      const value = String(option.value ?? option.label ?? "");
-      const label = String(option.label ?? option.value ?? "");
-      const description = String(option.description ?? "");
+    const optionsHtml = normalizeOptions(parameter, !isMultiple(field) && parameter.required !== true).map((option) => {
+      const value = option.value;
+      const label = option.label;
+      const description = option.description;
       return `
         <button type="button" class="rich-option" role="option" data-value="${escapeHtml(value)}" aria-selected="false">
           <span class="rich-option-title">${escapeHtml(label)}</span>
